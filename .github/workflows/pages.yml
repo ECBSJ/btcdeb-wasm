@@ -1,0 +1,66 @@
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than piling up.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust with the wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      # The engine tests replay real mainnet spends from checked-in fixtures, so
+      # a consensus regression fails the deploy instead of shipping.
+      - name: Test the engine
+        run: cargo test --release --manifest-path engine/Cargo.toml
+
+      - name: Build WebAssembly
+        run: wasm-pack build engine --target web --out-dir ../pkg --release
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -r index.html css js pkg _site/
+          touch _site/.nojekyll
+          # wasm-pack writes a .gitignore that would hide the build output.
+          rm -f _site/pkg/.gitignore
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

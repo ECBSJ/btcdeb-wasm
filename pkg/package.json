@@ -1,0 +1,17 @@
+{
+  "name": "btcdeb-engine",
+  "type": "module",
+  "description": "btcdeb-style Bitcoin Script stepping debugger, compiled to WebAssembly",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "btcdeb_engine_bg.wasm",
+    "btcdeb_engine.js",
+    "btcdeb_engine.d.ts"
+  ],
+  "main": "btcdeb_engine.js",
+  "types": "btcdeb_engine.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

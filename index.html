@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>btcdeb.wasm — Bitcoin Script debugger</title>
+<meta name="description" content="Step through Bitcoin Script in your browser. rust-bitcoin compiled to WebAssembly, live transactions from mempool.space.">
+<link rel="stylesheet" href="css/theme.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>₿</text></svg>">
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="glyph">₿</span>
+    <span class="name">btcdeb<span class="dim">.wasm</span></span>
+    <span class="tagline">bitcoin script debugger</span>
+  </div>
+  <div class="topbar-right">
+    <label class="field inline">
+      <span>net</span>
+      <select id="network" title="Which mempool.space instance to query">
+        <option value="mainnet">mainnet</option>
+        <option value="testnet4">testnet4</option>
+        <option value="testnet">testnet3</option>
+        <option value="signet">signet</option>
+      </select>
+    </label>
+    <span id="engine-version" class="version" title="Engine build">booting…</span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ── left: sources and settings ─────────────────────────────────── -->
+  <aside class="panel col-left">
+    <section class="block">
+      <h2>load spend</h2>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="txid" role="tab">txid</button>
+        <button class="tab" data-tab="raw" role="tab">raw tx</button>
+        <button class="tab" data-tab="script" role="tab">script</button>
+      </div>
+
+      <div class="tabpane active" data-pane="txid">
+        <label class="field">
+          <span>transaction id</span>
+          <input id="txid" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="64 hex characters">
+        </label>
+        <label class="field">
+          <span>input index (vin)</span>
+          <input id="vin" type="number" min="0" value="0">
+        </label>
+        <button id="load-txid" class="btn primary">fetch &amp; debug</button>
+        <p class="hint">Pulls the transaction and every prevout it spends from
+          mempool.space, then resolves the spend type.</p>
+      </div>
+
+      <div class="tabpane" data-pane="raw">
+        <label class="field">
+          <span>raw transaction hex</span>
+          <textarea id="rawtx" rows="5" spellcheck="false"
+                    placeholder="0200000001…"></textarea>
+        </label>
+        <label class="field">
+          <span>input index (vin)</span>
+          <input id="raw-vin" type="number" min="0" value="0">
+        </label>
+        <button id="load-raw" class="btn primary">resolve prevouts &amp; debug</button>
+        <p class="hint">Prevouts are looked up on mempool.space by the inputs'
+          outpoints, so unbroadcast transactions work too — as long as they spend
+          confirmed outputs.</p>
+      </div>
+
+      <div class="tabpane" data-pane="script">
+        <label class="field">
+          <span>script (asm or hex)</span>
+          <textarea id="script-src" rows="4" spellcheck="false"
+                    placeholder="OP_2 OP_3 OP_ADD OP_5 OP_EQUAL"></textarea>
+        </label>
+        <label class="field">
+          <span>initial stack (hex, top last)</span>
+          <textarea id="script-stack" rows="2" spellcheck="false"
+                    placeholder="one item per line"></textarea>
+        </label>
+        <label class="field">
+          <span>sigversion</span>
+          <select id="script-sigversion">
+            <option value="legacy">legacy</option>
+            <option value="witness_v0">witness v0</option>
+            <option value="tapscript">tapscript</option>
+          </select>
+        </label>
+        <button id="load-script" class="btn primary">debug script</button>
+        <p class="hint">No transaction, so signature checks cannot build a real
+          sighash. Enable <em>assume valid signatures</em> below to step past
+          them.</p>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>examples</h2>
+      <div id="examples" class="examples"></div>
+    </section>
+
+    <section class="block">
+      <h2>verify flags</h2>
+      <label class="check">
+        <input type="checkbox" id="assume-sigs">
+        <span>assume valid signatures</span>
+      </label>
+      <div id="flags" class="flags"></div>
+    </section>
+  </aside>
+
+  <!-- ── centre: script listing ─────────────────────────────────────── -->
+  <section class="panel col-mid">
+    <div class="panel-head">
+      <h2>script</h2>
+      <div id="spend-kind" class="badge">no spend loaded</div>
+    </div>
+
+    <div class="controls">
+      <button id="btn-step"   class="btn" disabled>step <kbd>F10</kbd></button>
+      <button id="btn-rewind" class="btn" disabled>rewind <kbd>F9</kbd></button>
+      <button id="btn-run"    class="btn" disabled>run <kbd>F5</kbd></button>
+      <button id="btn-reset"  class="btn" disabled>reset</button>
+    </div>
+
+    <div id="listing" class="listing" tabindex="0">
+      <p class="placeholder">Load a transaction, or pick an example, to begin
+        stepping.</p>
+    </div>
+
+    <div id="spend-notes" class="notes"></div>
+  </section>
+
+  <!-- ── right: machine state ───────────────────────────────────────── -->
+  <section class="panel col-right">
+    <div class="panel-head">
+      <h2>machine</h2>
+      <div id="status" class="badge">idle</div>
+    </div>
+
+    <div class="statgrid" id="stats"></div>
+
+    <h3 class="sub">stack <span class="dim" id="stack-count"></span></h3>
+    <ol id="stack" class="stack" reversed></ol>
+
+    <h3 class="sub">altstack <span class="dim" id="altstack-count"></span></h3>
+    <ol id="altstack" class="stack" reversed></ol>
+
+    <h3 class="sub">last step</h3>
+    <div id="step-detail" class="detail">—</div>
+  </section>
+</main>
+
+<!-- ── bottom: console ──────────────────────────────────────────────── -->
+<section class="console">
+  <div id="log" class="log" aria-live="polite"></div>
+  <form id="cmdform" class="cmdline" autocomplete="off">
+    <span class="prompt">btcdeb&gt;</span>
+    <input id="cmd" type="text" spellcheck="false" autocomplete="off"
+           placeholder="help">
+  </form>
+</section>
+
+<script type="module" src="js/main.js"></script>
+<noscript>
+  <p class="placeholder">This debugger runs entirely in your browser and needs
+  JavaScript and WebAssembly.</p>
+</noscript>
+</body>
+</html>

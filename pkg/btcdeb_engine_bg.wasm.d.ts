@@ -1,0 +1,33 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_debugger_free: (a: number, b: number) => void;
+export const btcc: (a: number, b: number) => [number, number, number, number];
+export const debugger_fromScript: (a: number, b: number, c: any, d: number, e: number, f: number, g: number) => [number, number, number];
+export const debugger_fromTx: (a: number, b: number, c: number, d: any, e: number, f: number) => [number, number, number];
+export const debugger_info: (a: number) => [number, number, number];
+export const debugger_listing: (a: number) => [number, number, number];
+export const debugger_records: (a: number) => [number, number, number];
+export const debugger_rewind: (a: number) => [number, number, number];
+export const debugger_run: (a: number, b: number) => [number, number, number];
+export const debugger_state: (a: number) => [number, number, number];
+export const debugger_step: (a: number) => [number, number, number];
+export const describeSpend: (a: number, b: number, c: any, d: number, e: number) => [number, number, number];
+export const disasm: (a: number, b: number) => [number, number, number];
+export const flagInfo: () => [number, number, number];
+export const parseTx: (a: number, b: number, c: number, d: number) => [number, number, number];
+export const scriptAddress: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const tf: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const version: () => [number, number];
+export const rustsecp256k1_v0_10_0_context_create: (a: number) => number;
+export const rustsecp256k1_v0_10_0_context_destroy: (a: number) => void;
+export const rustsecp256k1_v0_10_0_default_error_callback_fn: (a: number, b: number) => void;
+export const rustsecp256k1_v0_10_0_default_illegal_callback_fn: (a: number, b: number) => void;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_start: () => void;

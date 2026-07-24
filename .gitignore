@@ -1,0 +1,3 @@
+# Rust build output. The wasm-pack result in pkg/ IS committed so the site
+# works on GitHub Pages without CI.
+engine/target/
