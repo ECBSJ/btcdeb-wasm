@@ -113,7 +113,28 @@
       </label>
       <div id="flags" class="flags"></div>
     </section>
+    <section class="block">
+      <h2>layout</h2>
+      <label class="field range w-left">
+        <span>sources width <output>290px</output></span>
+        <input type="range" data-size="left" step="2">
+      </label>
+      <label class="field range w-right">
+        <span>machine width <output>340px</output></span>
+        <input type="range" data-size="right" step="2">
+      </label>
+      <label class="field range">
+        <span>console height <output>190px</output></span>
+        <input type="range" data-size="console" step="2">
+      </label>
+      <button id="size-reset" class="btn">reset layout</button>
+      <p class="hint">The dividers between panels drag too — double-click one to
+        put that panel back to its default.</p>
+    </section>
   </aside>
+
+  <div class="gutter gutter-col" data-resize="left" role="separator" tabindex="0"
+       aria-orientation="vertical" aria-label="Resize the sources panel"></div>
 
   <!-- ── centre: script listing ─────────────────────────────────────── -->
   <section class="panel col-mid">
@@ -137,6 +158,9 @@
     <div id="spend-notes" class="notes"></div>
   </section>
 
+  <div class="gutter gutter-col" data-resize="right" role="separator" tabindex="0"
+       aria-orientation="vertical" aria-label="Resize the machine panel"></div>
+
   <!-- ── right: machine state ───────────────────────────────────────── -->
   <section class="panel col-right">
     <div class="panel-head">
@@ -156,6 +180,9 @@
     <div id="step-detail" class="detail">—</div>
   </section>
 </main>
+
+<div class="gutter gutter-row" data-resize="console" role="separator" tabindex="0"
+     aria-orientation="horizontal" aria-label="Resize the console"></div>
 
 <!-- ── bottom: console ──────────────────────────────────────────────── -->
 <section class="console">

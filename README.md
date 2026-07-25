@@ -50,6 +50,9 @@ memory carries over.
 - **Flag toggles.** Turn `MINIMALDATA`, `CLEANSTACK`, `LOW_S`, `NULLFAIL` and
   friends on and off to see which rule a script actually trips over.
 - **Deep links.** `?txid=<txid>&vin=<n>&net=mainnet` loads a spend directly.
+- **Resizable panels.** Drag the dividers between the columns and above the
+  console, or use the sliders under *layout*; arrow keys nudge a focused
+  divider, double-clicking one resets it. Sizes persist in `localStorage`.
 
 ## Running it locally
 
@@ -118,6 +121,7 @@ css/theme.css           phosphor-green terminal theme
 js/main.js              session wiring: boot, load, step, flags
 js/ui.js                rendering: listing, stacks, step detail
 js/commands.js          the console command set
+js/layout.js            panel sizing: gutters, sliders, persistence
 js/mempool.js           mempool.space REST client
 pkg/                    wasm-pack output (committed)
 engine/src/interp.rs    the stepping evaluator

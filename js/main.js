@@ -5,6 +5,7 @@ import init, * as engine from '../pkg/btcdeb_engine.js';
 import * as mp from './mempool.js';
 import * as ui from './ui.js';
 import { runCommand, commandNames } from './commands.js';
+import { initLayout } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -541,4 +542,6 @@ async function boot() {
   }
 }
 
+// Panel sizing is pure DOM, so it works even if the engine fails to load.
+initLayout();
 boot();

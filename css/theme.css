@@ -23,6 +23,13 @@
           "DejaVu Sans Mono", monospace;
   --glow: 0 0 6px rgba(0, 255, 156, 0.35);
   --radius: 3px;
+
+  /* Panel sizing. js/layout.js overwrites these from the gutters, the sliders,
+     and localStorage; the values here are the defaults it resets to. */
+  --col-left:  290px;
+  --col-right: 340px;
+  --console-h: 190px;
+  --gutter: 6px;
 }
 
 * { box-sizing: border-box; }
@@ -114,10 +121,61 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr) 340px;
-  gap: 1px;
+  grid-template-columns:
+    var(--col-left) var(--gutter) minmax(0, 1fr) var(--gutter) var(--col-right);
   background: var(--line);
 }
+
+/* ── resize gutters ─────────────────────────────────────────────────── */
+.gutter {
+  position: relative;
+  background: var(--line);
+  touch-action: none;
+  transition: background 0.12s;
+}
+.gutter-col { cursor: col-resize; }
+.gutter-row { flex: none; height: var(--gutter); cursor: row-resize; }
+
+/* Grip marks, so the divider reads as draggable. */
+.gutter::after {
+  content: "";
+  position: absolute;
+  background: repeating-linear-gradient(
+    var(--dir, to bottom),
+    var(--line-hot) 0 2px,
+    transparent 2px 5px
+  );
+}
+.gutter-col::after {
+  top: 50%;
+  left: 2px;
+  right: 2px;
+  height: 30px;
+  margin-top: -15px;
+}
+.gutter-row::after {
+  --dir: to right;
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 30px;
+  margin-left: -15px;
+}
+
+.gutter:hover, .gutter:focus-visible { background: var(--line-hot); outline: none; }
+.gutter:hover::after, .gutter:focus-visible::after,
+.gutter.active::after {
+  background-image: repeating-linear-gradient(
+    var(--dir, to bottom),
+    var(--green) 0 2px,
+    transparent 2px 5px
+  );
+}
+.gutter.active { background: var(--green-mid); }
+
+/* Keep the drag from selecting text or hovering things under the pointer. */
+body.resizing { user-select: none; }
+body.resizing .panel, body.resizing .console { pointer-events: none; }
 
 .panel {
   background: var(--bg-panel);
@@ -192,6 +250,24 @@ input:focus, textarea:focus, select:focus {
 }
 select { cursor: pointer; }
 input::placeholder, textarea::placeholder { color: var(--fg-faint); }
+
+.field.range > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.field.range output { color: var(--fg-dim); }
+input[type="range"] {
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  accent-color: var(--green);
+  cursor: ew-resize;
+}
+input[type="range"]:focus-visible { outline: 1px solid var(--green-mid); }
 
 .btn {
   display: inline-flex;
@@ -310,13 +386,23 @@ kbd {
   margin-bottom: 10px;
 }
 
+/* The middle column owns its own vertical space so the listing grows and
+   shrinks with the console instead of guessing at a viewport offset. */
+.col-mid {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.col-mid > .panel-head, .col-mid > .controls { flex: none; }
+
 /* ── script listing ─────────────────────────────────────────────────── */
 .listing {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #040a08;
   padding: 6px 0;
-  max-height: calc(100vh - 340px);
+  flex: 1 1 auto;
+  min-height: 90px;
   overflow-y: auto;
   outline: none;
 }
@@ -369,7 +455,15 @@ kbd {
 }
 
 /* ── notes ──────────────────────────────────────────────────────────── */
-.notes { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.notes {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-height: 34%;
+  overflow-y: auto;
+}
 .note {
   font-size: 11px;
   line-height: 1.45;
@@ -472,10 +566,9 @@ kbd {
 /* ── console ────────────────────────────────────────────────────────── */
 .console {
   flex: none;
-  height: 190px;
+  height: var(--console-h);
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--line);
   background: #040a08;
 }
 .log {
@@ -512,16 +605,22 @@ kbd {
 .cmdline input:focus { box-shadow: none; }
 
 /* ── responsive ─────────────────────────────────────────────────────── */
+/* Below this the columns stack, so the horizontal gutters have nothing left to
+   divide — the width sliders go with them and only the console stays sizable. */
 @media (max-width: 1180px) {
   body { overflow: auto; }
-  .layout { grid-template-columns: minmax(0, 1fr) 320px; }
+  .layout { grid-template-columns: minmax(0, 1fr) var(--col-right); gap: 1px; }
   .col-left { grid-column: 1 / -1; }
+  .gutter-col { display: none; }
+  .field.range.w-left { display: none; }
+  .col-mid { display: block; overflow-y: auto; }
   .listing { max-height: 60vh; }
+  .notes { max-height: none; }
 }
 @media (max-width: 780px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
+  .field.range.w-right { display: none; }
   .brand .tagline { display: none; }
-  .console { height: 160px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
