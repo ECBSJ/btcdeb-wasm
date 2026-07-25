@@ -45,7 +45,7 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p _site
-          cp -r index.html css js pkg _site/
+          cp -r index.html css js img pkg _site/
           touch _site/.nojekyll
           # wasm-pack writes a .gitignore that would hide the build output.
           rm -f _site/pkg/.gitignore
