@@ -10,7 +10,7 @@ use bitcoin::{Amount, EcdsaSighashType, ScriptBuf, Transaction, TxOut};
 
 /// Outcome of a single signature check, verbose enough that the UI can explain
 /// *why* something failed rather than just showing a red 0.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct SigResult {
     pub valid: bool,
     /// Sighash actually signed, hex, big-endian display order. Empty when the
@@ -22,6 +22,11 @@ pub struct SigResult {
     /// True when there is no transaction loaded, so verification was skipped
     /// rather than performed.
     pub assumed: bool,
+    /// The exact pair this check ran against, hex, as it sat on the stack.
+    /// Multisig performs several checks per op, so without these the UI cannot
+    /// say *which* signature went with *which* key.
+    pub pubkey: String,
+    pub signature: String,
 }
 
 impl SigResult {
@@ -32,8 +37,16 @@ impl SigResult {
             sighash_type: String::new(),
             detail: detail.into(),
             warnings: vec![],
-            assumed: false,
+            ..Default::default()
         }
+    }
+
+    /// Record the pair that was checked. Every result leaves `check_ecdsa` /
+    /// `check_schnorr` through here, including the early failures.
+    fn with_pair(mut self, sig: &[u8], pubkey: &[u8]) -> Self {
+        self.signature = hex::encode(sig);
+        self.pubkey = hex::encode(pubkey);
+        self
     }
 }
 
@@ -87,6 +100,19 @@ impl SigContext {
         require_strict_der: bool,
         require_low_s: bool,
     ) -> SigResult {
+        self.check_ecdsa_inner(secp, sig, pubkey, mode, require_strict_der, require_low_s)
+            .with_pair(sig, pubkey)
+    }
+
+    fn check_ecdsa_inner(
+        &self,
+        secp: &Secp256k1<VerifyOnly>,
+        sig: &[u8],
+        pubkey: &[u8],
+        mode: &SigMode,
+        require_strict_der: bool,
+        require_low_s: bool,
+    ) -> SigResult {
         if sig.is_empty() {
             return SigResult::fail("empty signature (this is a normal way to fail a check)");
         }
@@ -112,7 +138,7 @@ impl SigContext {
                         sighash_type: describe_ecdsa_hashtype(hash_type_byte),
                         detail: "signature is not strict DER (SCRIPT_VERIFY_DERSIG)".into(),
                         warnings,
-                        assumed: false,
+                        ..Default::default()
                     };
                 }
                 warnings.push("signature is not strict DER; parsed leniently".into());
@@ -126,7 +152,7 @@ impl SigContext {
                 sighash_type: describe_ecdsa_hashtype(hash_type_byte),
                 detail: "could not parse ECDSA signature".into(),
                 warnings,
-                assumed: false,
+                ..Default::default()
             };
         };
 
@@ -140,7 +166,7 @@ impl SigContext {
                     sighash_type: describe_ecdsa_hashtype(hash_type_byte),
                     detail: "signature has high S value (SCRIPT_VERIFY_LOW_S)".into(),
                     warnings,
-                    assumed: false,
+                    ..Default::default()
                 };
             }
             warnings.push("signature has a high S value (non-standard, BIP62)".into());
@@ -155,7 +181,7 @@ impl SigContext {
                     sighash_type: describe_ecdsa_hashtype(hash_type_byte),
                     detail: format!("invalid public key: {}", e),
                     warnings,
-                    assumed: false,
+                    ..Default::default()
                 }
             }
         };
@@ -172,7 +198,7 @@ impl SigContext {
                     sighash_type: describe_ecdsa_hashtype(hash_type_byte),
                     detail: e,
                     warnings,
-                    assumed: false,
+                    ..Default::default()
                 }
             }
         };
@@ -191,7 +217,7 @@ impl SigContext {
                 "signature does not verify against this pubkey and sighash".into()
             },
             warnings,
-            assumed: false,
+            ..Default::default()
         }
     }
 
@@ -223,6 +249,17 @@ impl SigContext {
     /// `sig` is 64 bytes for implicit SIGHASH_DEFAULT, or 65 with an explicit
     /// sighash type byte.
     pub fn check_schnorr(
+        &self,
+        secp: &Secp256k1<VerifyOnly>,
+        sig: &[u8],
+        pubkey: &[u8],
+        mode: &SigMode,
+    ) -> SigResult {
+        self.check_schnorr_inner(secp, sig, pubkey, mode)
+            .with_pair(sig, pubkey)
+    }
+
+    fn check_schnorr_inner(
         &self,
         secp: &Secp256k1<VerifyOnly>,
         sig: &[u8],
@@ -293,7 +330,7 @@ impl SigContext {
                 "BIP340 signature does not verify".into()
             },
             warnings,
-            assumed: false,
+            ..Default::default()
         }
     }
 

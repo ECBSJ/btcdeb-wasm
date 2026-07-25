@@ -663,6 +663,10 @@ impl Machine {
                     detail: "not verified; no transaction loaded".into(),
                     warnings: vec!["load a transaction to verify this for real".into()],
                     assumed: true,
+                    // The pair is still worth showing: it says which key this
+                    // op would have checked against.
+                    pubkey: hex::encode(pubkey),
+                    signature: hex::encode(sig),
                 });
                 return Ok(true);
             }
@@ -1091,13 +1095,32 @@ impl Machine {
                         ki += 1;
                         let ok = self.check_sig(sig, &key, sigversion, frame_idx, r)?;
                         if ok {
+                            // Spell the pair out in full: with several checks per
+                            // op, "signature 2 matched key 3" alone leaves the
+                            // reader counting stack items to work out which bytes
+                            // that was.
                             details.push(format!("signature {} matched key {}", matched + 1, ki));
+                            details.push(format!("  key {} = {}", ki, hex::encode(&key)));
+                            details.push(format!(
+                                "  signature {} = {}",
+                                matched + 1,
+                                hex::encode(sig)
+                            ));
                             matched += 1;
                             found = true;
                             break;
                         }
                     }
                     if !found {
+                        details.push(format!(
+                            "signature {} matched none of the remaining keys",
+                            matched + 1
+                        ));
+                        details.push(format!(
+                            "  signature {} = {}",
+                            matched + 1,
+                            hex::encode(sig)
+                        ));
                         break;
                     }
                 }

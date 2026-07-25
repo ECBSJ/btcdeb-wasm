@@ -234,7 +234,11 @@ export function renderStepDetail(rec) {
   if (rec.skipped) row('skipped', 'inside an unexecuted branch');
   if (dl.children.length) frag.appendChild(dl);
 
-  for (const n of rec.notes || []) frag.appendChild(node('div', 'note good', n));
+  // Engine-indented notes are continuations of the note above (see logRecord).
+  for (const n of rec.notes || []) {
+    const cont = n.startsWith('  ');
+    frag.appendChild(node('div', cont ? 'note good cont' : 'note good', cont ? n.trim() : n));
+  }
   if (rec.error) frag.appendChild(node('div', 'note err', rec.error));
 
   for (const sig of rec.sigs || []) {
@@ -249,6 +253,8 @@ export function renderStepDetail(rec) {
     );
     const sdl = node('dl');
     const srow = (k, v) => sdl.append(node('dt', null, k), node('dd', null, v));
+    if (sig.pubkey) srow('pubkey', sig.pubkey);
+    if (sig.signature) srow('signature', sig.signature);
     if (sig.sighash_type) srow('sighash type', sig.sighash_type);
     if (sig.sighash) srow('sighash', sig.sighash);
     if (sig.detail) srow('detail', sig.detail);

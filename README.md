@@ -34,7 +34,9 @@ memory carries over.
   P2SH, P2WPKH, P2WSH, nested segwit, or taproot — key path or script path.
 - **Honest signature checking.** Signatures are verified against sighashes
   computed from the actual transaction. The sighash and its type are shown for
-  every check. Without a transaction loaded, checks are reported as *not
+  every check, alongside the exact pubkey and signature bytes it ran against —
+  so a multisig says which signature matched which key, in full hex, not just
+  "signature 2 matched key 3". Without a transaction loaded, checks are reported as *not
   verified* rather than quietly passing (there is an opt-in "assume valid
   signatures" toggle for exploring script logic).
 - **Taproot aware.** Control blocks are decoded and the commitment is verified

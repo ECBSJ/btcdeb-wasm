@@ -382,6 +382,13 @@ kbd {
 .note.err { border-left-color: var(--red); color: #ffb4b0; }
 .note.warn { border-left-color: var(--amber); color: #ffe6a8; }
 .note.good { border-left-color: var(--green); color: var(--fg); }
+/* Continuation of the note above it: the hex behind a matched pair. */
+.note.cont {
+  margin-left: 12px;
+  border-left-color: var(--line-hot);
+  color: var(--cyan);
+  word-break: break-all;
+}
 
 /* ── stats ──────────────────────────────────────────────────────────── */
 .statgrid {

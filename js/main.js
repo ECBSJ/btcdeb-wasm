@@ -73,14 +73,20 @@ function refresh() {
 function logRecord(rec) {
   const label = `#${String(rec.n).padStart(3, '0')} ${rec.op}`;
   ui.log(label, rec.transition ? 'info' : rec.skipped ? 'info' : 'out');
-  for (const n of rec.notes || []) ui.log(`     · ${n}`, 'info');
+  // A note indented by the engine continues the note above it (multisig spells
+  // its matched pairs out over several lines), so it gets no bullet of its own.
+  for (const n of rec.notes || []) {
+    ui.log(n.startsWith('  ') ? `      ${n}` : `     · ${n}`, 'info');
+  }
   for (const s of rec.sigs || []) {
     if (s.assumed) {
       ui.log('     ⚠ signature not verified (no transaction loaded)', 'warn');
     } else {
       ui.log(`     ${s.valid ? '✓' : '✗'} ${s.detail}`, s.valid ? 'trace' : 'err');
-      if (s.sighash) ui.log(`       sighash ${s.sighash} [${s.sighash_type}]`, 'info');
     }
+    if (s.pubkey) ui.log(`       key       ${s.pubkey}`, 'info');
+    if (s.signature) ui.log(`       signature ${s.signature}`, 'info');
+    if (s.sighash) ui.log(`       sighash   ${s.sighash} [${s.sighash_type}]`, 'info');
     for (const w of s.warnings || []) ui.log(`     ! ${w}`, 'warn');
   }
   if (rec.error) ui.log(`     ✗ ${rec.error}`, 'err');

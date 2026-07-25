@@ -35,6 +35,10 @@ struct Outcome {
     sig_checks: usize,
     valid_sigs: usize,
     trace: Vec<String>,
+    /// Every note the run emitted, in order.
+    notes: Vec<String>,
+    /// (pubkey, signature) hex for each check that verified.
+    verified_pairs: Vec<(String, String)>,
 }
 
 fn run_fixture(f: &serde_json::Value) -> Outcome {
@@ -86,16 +90,20 @@ fn run_fixture(f: &serde_json::Value) -> Outcome {
     .expect("machine builds");
 
     let mut trace = Vec::new();
+    let mut notes = Vec::new();
+    let mut verified_pairs = Vec::new();
     let (mut sig_checks, mut valid_sigs) = (0, 0);
     for _ in 0..10_000 {
         if m.state().finished {
             break;
         }
         let r = m.step();
+        notes.extend(r.notes.iter().cloned());
         for s in &r.sigs {
             sig_checks += 1;
             if s.valid {
                 valid_sigs += 1;
+                verified_pairs.push((s.pubkey.clone(), s.signature.clone()));
             }
             assert!(!s.assumed, "signature check was assumed rather than verified");
         }
@@ -116,6 +124,8 @@ fn run_fixture(f: &serde_json::Value) -> Outcome {
         sig_checks,
         valid_sigs,
         trace,
+        notes,
+        verified_pairs,
     }
 }
 
@@ -162,6 +172,72 @@ fn real_mainnet_spends_all_verify() {
         }
     }
     assert!(failures.is_empty(), "spends that should verify did not:\n{}", failures.join("\n"));
+}
+
+/// `OP_CHECKMULTISIG` must say which signature went with which key, in full: the
+/// index alone ("signature 2 matched key 3") is not enough to check the work.
+#[test]
+fn multisig_reports_the_exact_matched_pairs() {
+    let fixtures: serde_json::Value = serde_json::from_str(FIXTURES).unwrap();
+    let f = fixtures
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|f| f["type"] == "v0_p2wsh")
+        .expect("a p2wsh multisig fixture");
+
+    let out = run_fixture(f);
+    assert!(out.success, "the fixture spend should verify: {:?}", out.error);
+    assert_eq!(out.verified_pairs.len(), 2, "a 2-of-3 needs exactly two valid checks");
+    assert!(
+        out.notes.iter().any(|n| n.contains("2-of-3 multisig: satisfied")),
+        "expected the multisig summary, got {:?}",
+        out.notes
+    );
+
+    // The witness holds the signatures and, as its last item, the witness script
+    // the keys came from. Both halves of every reported pair must be found there,
+    // so the log cannot be quoting bytes the spend never contained.
+    let raw = hex::decode(f["tx_hex"].as_str().unwrap()).unwrap();
+    let tx = Transaction::consensus_decode(&mut raw.as_slice()).unwrap();
+    let witness: Vec<String> = tx.input[f["input_index"].as_u64().unwrap() as usize]
+        .witness
+        .iter()
+        .map(hex::encode)
+        .collect();
+    let witness_script = witness.last().expect("witness script");
+
+    for (i, (pubkey, signature)) in out.verified_pairs.iter().enumerate() {
+        assert!(
+            witness_script.contains(pubkey),
+            "reported key {} is not in the witness script: {}",
+            i + 1,
+            pubkey
+        );
+        assert!(
+            witness.iter().any(|w| w == signature),
+            "reported signature {} is not in the witness: {}",
+            i + 1,
+            signature
+        );
+        assert!(
+            out.notes.iter().any(|n| n.trim_start().ends_with(&format!("= {}", pubkey))),
+            "no note spelled out key {}: {:?}",
+            i + 1,
+            out.notes
+        );
+        assert!(
+            out.notes.iter().any(|n| n.trim_start().ends_with(&format!("= {}", signature))),
+            "no note spelled out signature {}: {:?}",
+            i + 1,
+            out.notes
+        );
+    }
+
+    // Distinct keys, distinct signatures: a bug that reported the same pair twice
+    // would otherwise slip past the checks above.
+    assert_ne!(out.verified_pairs[0].0, out.verified_pairs[1].0);
+    assert_ne!(out.verified_pairs[0].1, out.verified_pairs[1].1);
 }
 
 /// A valid spend must stop verifying if we corrupt the sighash preimage, which
