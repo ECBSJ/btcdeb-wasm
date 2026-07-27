@@ -249,7 +249,12 @@ function loadScript(src, stackText, sigversion) {
 
 function buildFlagUI() {
   session.flagList = engine.flagInfo();
-  session.flags = session.flagList.reduce((acc, f) => acc | f.bit, 0);
+  // Consensus rules on, policy (standardness) rules off: a mined transaction
+  // must replay successfully by default, and plenty of mined ones are
+  // nonstandard.
+  session.flags = session.flagList
+    .filter((f) => !f.policy)
+    .reduce((acc, f) => acc | f.bit, 0);
 
   const host = $('flags');
   host.replaceChildren();
@@ -259,10 +264,10 @@ function buildFlagUI() {
     label.title = f.description;
     const box = document.createElement('input');
     box.type = 'checkbox';
-    box.checked = true;
+    box.checked = !f.policy;
     box.addEventListener('change', () => setFlag(f.bit, box.checked, f.name));
     const span = document.createElement('span');
-    span.textContent = f.name;
+    span.textContent = f.policy ? `${f.name} (policy)` : f.name;
     label.append(box, span);
     host.appendChild(label);
   }

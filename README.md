@@ -49,6 +49,9 @@ memory carries over.
   conversions.
 - **Flag toggles.** Turn `MINIMALDATA`, `CLEANSTACK`, `LOW_S`, `NULLFAIL` and
   friends on and off to see which rule a script actually trips over.
+  Consensus rules are on by default; standardness-only rules (marked
+  *policy*) start off, so a mined transaction always replays the way the
+  chain accepted it — plenty of mined ones are nonstandard.
 - **Deep links.** `?txid=<txid>&vin=<n>&net=mainnet` loads a spend directly.
 - **Resizable panels.** Drag the dividers between the columns and above the
   console, or use the sliders under *layout*; arrow keys nudge a focused

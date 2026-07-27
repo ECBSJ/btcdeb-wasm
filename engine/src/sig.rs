@@ -365,6 +365,9 @@ impl SigContext {
 
 /// Legacy `FindAndDelete`: `OP_CHECKSIG` strips any push of the signature from
 /// the scriptCode before hashing. Only reachable in pre-segwit scripts.
+///
+/// Core only matches at opcode boundaries: a signature embedded inside some
+/// larger push's data stays put.
 pub fn find_and_delete(script: &Script, sig: &[u8]) -> ScriptBuf {
     if sig.is_empty() {
         return script.into();
@@ -379,12 +382,97 @@ pub fn find_and_delete(script: &Script, sig: &[u8]) -> ScriptBuf {
     let mut out = Vec::with_capacity(hay.len());
     let mut i = 0;
     while i < hay.len() {
-        if hay.len() - i >= pat.len() && &hay[i..i + pat.len()] == pat {
+        while hay.len() - i >= pat.len() && &hay[i..i + pat.len()] == pat {
             i += pat.len();
-        } else {
-            out.push(hay[i]);
-            i += 1;
         }
+        // Copy one opcode, push data included.
+        let start = i;
+        let Some(next) = next_opcode(hay, i) else {
+            // Truncated push at the tail: Core copies the remainder verbatim.
+            out.extend_from_slice(&hay[start..]);
+            break;
+        };
+        i = next;
+        out.extend_from_slice(&hay[start..i]);
     }
     ScriptBuf::from_bytes(out)
+}
+
+/// Offset just past the opcode at `i`, or `None` if its push data is truncated.
+fn next_opcode(hay: &[u8], mut i: usize) -> Option<usize> {
+    if i >= hay.len() {
+        return None;
+    }
+    let op = hay[i];
+    i += 1;
+    let len = match op {
+        0x01..=0x4b => op as usize,
+        0x4c => {
+            let n = *hay.get(i)? as usize;
+            i += 1;
+            n
+        }
+        0x4d => {
+            let n = u16::from_le_bytes([*hay.get(i)?, *hay.get(i + 1)?]) as usize;
+            i += 2;
+            n
+        }
+        0x4e => {
+            let n = u32::from_le_bytes([
+                *hay.get(i)?,
+                *hay.get(i + 1)?,
+                *hay.get(i + 2)?,
+                *hay.get(i + 3)?,
+            ]) as usize;
+            i += 4;
+            n
+        }
+        _ => 0,
+    };
+    if hay.len() - i < len {
+        return None;
+    }
+    Some(i + len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn script(hex: &str) -> ScriptBuf {
+        ScriptBuf::from_bytes(hex::decode(hex).unwrap())
+    }
+
+    #[test]
+    fn find_and_delete_removes_a_pushed_signature() {
+        // PUSH(2) aabb / OP_DUP / PUSH(2) aabb
+        let s = script("02aabb7602aabb");
+        let out = find_and_delete(&s, &[0xaa, 0xbb]);
+        assert_eq!(out.as_bytes(), &[0x76]);
+    }
+
+    #[test]
+    fn find_and_delete_only_matches_at_opcode_boundaries() {
+        // PUSH(4) 02aabbcc: the pattern 02aabb sits inside the push data, and
+        // Core's FindAndDelete never looks there.
+        let s = script("0402aabbcc");
+        let out = find_and_delete(&s, &[0xaa, 0xbb]);
+        assert_eq!(out.as_bytes(), s.as_bytes());
+    }
+
+    #[test]
+    fn find_and_delete_removes_back_to_back_matches() {
+        // Two adjacent pushes of the signature, then OP_1.
+        let s = script("02aabb02aabb51");
+        let out = find_and_delete(&s, &[0xaa, 0xbb]);
+        assert_eq!(out.as_bytes(), &[0x51]);
+    }
+
+    #[test]
+    fn find_and_delete_keeps_a_truncated_tail() {
+        // OP_1 then a PUSH(4) with only two data bytes: copied through as-is.
+        let s = script("5104aabb");
+        let out = find_and_delete(&s, &[0xaa, 0xbb]);
+        assert_eq!(out.as_bytes(), s.as_bytes());
+    }
 }

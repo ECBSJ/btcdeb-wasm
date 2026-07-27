@@ -578,12 +578,24 @@ impl Machine {
                 ));
                 return;
             }
-            if self.flags & VERIFY_CLEANSTACK != 0 && self.stack.len() != 1 {
-                r.error = Some(format!(
-                    "CLEANSTACK: {} elements left on the stack, expected exactly 1",
-                    self.stack.len()
-                ));
-                return;
+            if self.stack.len() != 1 {
+                // BIP141/BIP342 make the one-element rule consensus for witness
+                // scripts; for legacy it is only the CLEANSTACK standardness rule.
+                if self.frames[self.frame_idx].sigversion != SigVersion::Legacy {
+                    r.error = Some(format!(
+                        "{} elements left on the stack: witness scripts must finish with exactly 1",
+                        self.stack.len()
+                    ));
+                    return;
+                }
+                if self.flags & VERIFY_CLEANSTACK != 0 {
+                    r.error = Some(format!(
+                        "CLEANSTACK: {} elements left on the stack, expected exactly 1 \
+                         (standardness rule; consensus allows this)",
+                        self.stack.len()
+                    ));
+                    return;
+                }
             }
             r.notes.push("SCRIPT SUCCEEDED".into());
         } else {
@@ -612,7 +624,7 @@ impl Machine {
     }
 
     /// Legacy/segwit scriptCode: everything from the last OP_CODESEPARATOR on.
-    fn script_code(&self, frame_idx: usize) -> ScriptBuf {
+    fn script_code(&self, frame_idx: usize, sigversion: SigVersion) -> ScriptBuf {
         let frame = &self.frames[frame_idx];
         let start = frame
             .ins
@@ -620,10 +632,12 @@ impl Machine {
             .map(|i| i.offset)
             .unwrap_or(0);
         let bytes = frame.script.as_bytes();
-        // Strip OP_CODESEPARATOR bytes, as Core's serializer does.
+        // Core's legacy sighash serializer strips OP_CODESEPARATOR bytes; the
+        // BIP143 scriptCode keeps them (only truncation applies).
+        let strip_codesep = sigversion == SigVersion::Legacy;
         let mut out = Vec::with_capacity(bytes.len() - start);
         for ins in frame.ins.iter().skip(self.begin_codehash) {
-            if ins.opcode == 0xab {
+            if strip_codesep && ins.opcode == 0xab {
                 continue;
             }
             let end = ins.offset + ins.len;
@@ -632,10 +646,15 @@ impl Machine {
         ScriptBuf::from_bytes(out)
     }
 
+    /// `deleted_sigs` are the signatures FindAndDelete removes from the legacy
+    /// scriptCode before hashing: just this one for OP_CHECKSIG, but every
+    /// signature in the vector for OP_CHECKMULTISIG (Core deletes them all up
+    /// front, so each check in a multisig hashes the same stripped scriptCode).
     fn check_sig(
         &mut self,
         sig: &[u8],
         pubkey: &[u8],
+        deleted_sigs: &[Vec<u8>],
         sigversion: SigVersion,
         frame_idx: usize,
         r: &mut StepRecord,
@@ -699,8 +718,14 @@ impl Machine {
         }
 
         let script_code = match sigversion {
-            SigVersion::Legacy => find_and_delete(&self.script_code(frame_idx), sig),
-            _ => self.script_code(frame_idx),
+            SigVersion::Legacy => {
+                let mut code = self.script_code(frame_idx, sigversion);
+                for s in deleted_sigs {
+                    code = find_and_delete(&code, s);
+                }
+                code
+            }
+            _ => self.script_code(frame_idx, sigversion),
         };
         let mode = if sigversion == SigVersion::Legacy {
             SigMode::Legacy { script_code: script_code.as_script() }
@@ -1007,10 +1032,19 @@ impl Machine {
                 // OP_CHECKSIG / OP_CHECKSIGVERIFY
                 let pubkey = self.pop()?;
                 let sig = self.pop()?;
-                let ok = self.check_sig(&sig, &pubkey, sigversion, frame_idx, r)?;
+                let ok = self.check_sig(
+                    &sig,
+                    &pubkey,
+                    std::slice::from_ref(&sig),
+                    sigversion,
+                    frame_idx,
+                    r,
+                )?;
                 if !ok && self.flags & VERIFY_NULLFAIL != 0 && !sig.is_empty() {
                     return Err(
-                        "NULLFAIL: a failing signature check must have an empty signature".into(),
+                        "NULLFAIL: a failing signature check must have an empty signature \
+                         (standardness rule; consensus allows this)"
+                            .into(),
                     );
                 }
                 if op == 0xad {
@@ -1033,7 +1067,7 @@ impl Machine {
                     r.notes.push("empty signature: counts as a failed check".into());
                     false
                 } else {
-                    self.check_sig(&sig, &pubkey, sigversion, frame_idx, r)?
+                    self.check_sig(&sig, &pubkey, &[], sigversion, frame_idx, r)?
                 };
                 if !ok && !sig.is_empty() {
                     return Err("NULLFAIL: failing tapscript check with a non-empty signature".into());
@@ -1093,7 +1127,7 @@ impl Machine {
                     while ki < keys.len() {
                         let key = keys[ki].clone();
                         ki += 1;
-                        let ok = self.check_sig(sig, &key, sigversion, frame_idx, r)?;
+                        let ok = self.check_sig(sig, &key, &sigs, sigversion, frame_idx, r)?;
                         if ok {
                             // Spell the pair out in full: with several checks per
                             // op, "signature 2 matched key 3" alone leaves the
@@ -1131,7 +1165,11 @@ impl Machine {
                 r.notes
                     .push(format!("{}-of-{} multisig: {}", nsigs, nkeys, if ok { "satisfied" } else { "NOT satisfied" }));
                 if !ok && self.flags & VERIFY_NULLFAIL != 0 && sigs.iter().any(|s| !s.is_empty()) {
-                    return Err("NULLFAIL: failing multisig with non-empty signatures".into());
+                    return Err(
+                        "NULLFAIL: failing multisig with non-empty signatures \
+                         (standardness rule; consensus allows this)"
+                            .into(),
+                    );
                 }
                 if op == 0xaf {
                     if !ok {

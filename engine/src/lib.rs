@@ -490,28 +490,31 @@ struct FlagView {
     name: String,
     bit: u32,
     description: String,
+    /// Standardness-only rule: mainnet relay enforces it, mined blocks need not.
+    policy: bool,
 }
 
 /// Script verification flags, exposed so the UI can build its toggles.
 #[wasm_bindgen(js_name = flagInfo)]
 pub fn flag_info() -> Result<JsValue, JsValue> {
     let flags = [
-        ("P2SH", interp::VERIFY_P2SH, "evaluate P2SH redeem scripts"),
-        ("DERSIG", interp::VERIFY_DERSIG, "require strict DER signatures"),
-        ("LOW_S", interp::VERIFY_LOW_S, "require low S values"),
-        ("NULLDUMMY", interp::VERIFY_NULLDUMMY, "CHECKMULTISIG dummy must be empty"),
-        ("MINIMALDATA", interp::VERIFY_MINIMALDATA, "require minimal pushes and numbers"),
-        ("CLEANSTACK", interp::VERIFY_CLEANSTACK, "require exactly one stack element at the end"),
-        ("CHECKLOCKTIMEVERIFY", interp::VERIFY_CHECKLOCKTIMEVERIFY, "enforce BIP65 CLTV"),
-        ("CHECKSEQUENCEVERIFY", interp::VERIFY_CHECKSEQUENCEVERIFY, "enforce BIP112 CSV"),
-        ("NULLFAIL", interp::VERIFY_NULLFAIL, "failed checks must use an empty signature"),
+        ("P2SH", interp::VERIFY_P2SH, "evaluate P2SH redeem scripts", false),
+        ("DERSIG", interp::VERIFY_DERSIG, "require strict DER signatures", false),
+        ("LOW_S", interp::VERIFY_LOW_S, "require low S values (policy)", true),
+        ("NULLDUMMY", interp::VERIFY_NULLDUMMY, "CHECKMULTISIG dummy must be empty", false),
+        ("MINIMALDATA", interp::VERIFY_MINIMALDATA, "require minimal pushes and numbers (policy)", true),
+        ("CLEANSTACK", interp::VERIFY_CLEANSTACK, "require exactly one stack element at the end (policy)", true),
+        ("CHECKLOCKTIMEVERIFY", interp::VERIFY_CHECKLOCKTIMEVERIFY, "enforce BIP65 CLTV", false),
+        ("CHECKSEQUENCEVERIFY", interp::VERIFY_CHECKSEQUENCEVERIFY, "enforce BIP112 CSV", false),
+        ("NULLFAIL", interp::VERIFY_NULLFAIL, "failed checks must use an empty signature (policy)", true),
     ];
     let list: Vec<FlagView> = flags
         .into_iter()
-        .map(|(name, bit, description)| FlagView {
+        .map(|(name, bit, description, policy)| FlagView {
             name: name.to_string(),
             bit,
             description: description.to_string(),
+            policy,
         })
         .collect();
     to_js(&list)

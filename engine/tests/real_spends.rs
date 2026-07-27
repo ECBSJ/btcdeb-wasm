@@ -14,17 +14,32 @@ use btcdeb_engine::spend;
 
 const FIXTURES: &str = include_str!("real_spends.json");
 
-/// Consensus + standardness flags a mainnet node would apply today.
-fn flags() -> u32 {
+/// Consensus rules a mainnet block must satisfy today.
+fn consensus_flags() -> u32 {
     interp::VERIFY_P2SH
         | interp::VERIFY_DERSIG
-        | interp::VERIFY_LOW_S
         | interp::VERIFY_NULLDUMMY
-        | interp::VERIFY_MINIMALDATA
-        | interp::VERIFY_CLEANSTACK
         | interp::VERIFY_CHECKLOCKTIMEVERIFY
         | interp::VERIFY_CHECKSEQUENCEVERIFY
+}
+
+/// Consensus + standardness flags a mainnet node would relay with today.
+fn standard_flags() -> u32 {
+    consensus_flags()
+        | interp::VERIFY_LOW_S
+        | interp::VERIFY_MINIMALDATA
+        | interp::VERIFY_CLEANSTACK
         | interp::VERIFY_NULLFAIL
+}
+
+/// Mined-but-nonstandard fixtures set `"consensus_only": true` and skip the
+/// policy flags, exactly as a block-validating node does.
+fn fixture_flags(f: &serde_json::Value) -> u32 {
+    if f["consensus_only"].as_bool().unwrap_or(false) {
+        consensus_flags()
+    } else {
+        standard_flags()
+    }
 }
 
 struct Outcome {
@@ -81,7 +96,7 @@ fn run_fixture(f: &serde_json::Value) -> Outcome {
     let mut m = Machine::new(
         &info.frames,
         initial,
-        flags(),
+        fixture_flags(f),
         Some(ctx),
         false, // never assume: these must verify for real
         witness_size,
@@ -300,7 +315,7 @@ fn rewind_restores_state() {
     );
     let initial: Vec<Vec<u8>> = info.initial_stack.iter().map(|s| hex::decode(s).unwrap()).collect();
     let ctx = SigContext { tx: tx.clone(), input_index, prevouts };
-    let mut m = Machine::new(&info.frames, initial, flags(), Some(ctx), false, 0, None).unwrap();
+    let mut m = Machine::new(&info.frames, initial, standard_flags(), Some(ctx), false, 0, None).unwrap();
 
     for _ in 0..4 {
         m.step();
