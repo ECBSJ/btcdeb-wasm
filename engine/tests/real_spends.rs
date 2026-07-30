@@ -33,13 +33,19 @@ fn standard_flags() -> u32 {
 }
 
 /// Mined-but-nonstandard fixtures set `"consensus_only": true` and skip the
-/// policy flags, exactly as a block-validating node does.
+/// policy flags, exactly as a block-validating node does. Fixtures mined
+/// before BIP66 activated (height 363725) set `"pre_bip66": true` and shed
+/// DERSIG too, since strict DER was not consensus when they were mined.
 fn fixture_flags(f: &serde_json::Value) -> u32 {
-    if f["consensus_only"].as_bool().unwrap_or(false) {
+    let mut flags = if f["consensus_only"].as_bool().unwrap_or(false) {
         consensus_flags()
     } else {
         standard_flags()
+    };
+    if f["pre_bip66"].as_bool().unwrap_or(false) {
+        flags &= !interp::VERIFY_DERSIG;
     }
+    flags
 }
 
 struct Outcome {

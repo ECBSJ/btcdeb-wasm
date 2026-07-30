@@ -163,7 +163,10 @@ impl Machine {
         let mut compiled = Vec::new();
         for f in frames {
             let bytes = hex::decode(&f.script_hex).map_err(|e| format!("bad script hex: {}", e))?;
-            if bytes.len() > MAX_SCRIPT_SIZE {
+            // The 10,000-byte cap is a legacy/v0 rule: tapscript has no script
+            // size limit (BIP342), only the block weight bound.
+            let size_capped = matches!(f.sigversion, SigVersion::Legacy | SigVersion::WitnessV0);
+            if size_capped && bytes.len() > MAX_SCRIPT_SIZE {
                 return Err(format!(
                     "script {} is {} bytes, over the {} byte limit",
                     f.label,
@@ -341,6 +344,24 @@ impl Machine {
         }
         self.records.push(rec.clone());
         rec
+    }
+
+    /// Drive execution to the end without recording history or step records,
+    /// so batch validation does not pay the per-step snapshot cost. Steps
+    /// taken here cannot be rewound. Returns whether execution finished
+    /// within `max_steps`.
+    pub fn run_to_completion(&mut self, max_steps: usize) -> bool {
+        for _ in 0..max_steps {
+            if self.finished {
+                break;
+            }
+            let rec = self.step_inner();
+            if let Some(e) = &rec.error {
+                self.error = Some(e.clone());
+                self.finished = true;
+            }
+        }
+        self.finished
     }
 
     fn step_inner(&mut self) -> StepRecord {
@@ -1022,7 +1043,9 @@ impl Machine {
             0xab => {
                 // OP_CODESEPARATOR
                 self.begin_codehash = self.ip;
-                self.codesep_pos = ins.offset as u32;
+                // BIP342 commits to the opcode index of the last executed
+                // OP_CODESEPARATOR (Core's opcode_pos), not its byte offset.
+                self.codesep_pos = (self.ip - 1) as u32;
                 r.notes.push(format!(
                     "scriptCode for later signature checks now starts at byte {}",
                     ins.offset + ins.len
@@ -1288,5 +1311,36 @@ pub fn single_frame(script: &Script, label: &str, sigversion: SigVersion) -> Fra
         enter: EnterAction::Keep,
         leaf_hash: None,
         key_path: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(sigversion: SigVersion, script_hex: String) -> Frame {
+        Frame {
+            label: "test".into(),
+            script_hex,
+            sigversion,
+            enter: EnterAction::Keep,
+            leaf_hash: if sigversion == SigVersion::Tapscript {
+                Some("00".repeat(32))
+            } else {
+                None
+            },
+            key_path: false,
+        }
+    }
+
+    /// BIP342: tapscript has no 10,000-byte script limit (inscription reveal
+    /// scripts routinely exceed it); legacy and v0 keep the cap.
+    #[test]
+    fn script_size_cap_is_legacy_and_v0_only() {
+        let big = "51".repeat(MAX_SCRIPT_SIZE + 1);
+        let ok = Machine::new(&[frame(SigVersion::Tapscript, big.clone())], vec![], 0, None, true, 0, None);
+        assert!(ok.is_ok(), "oversized tapscript must build: {:?}", ok.err());
+        assert!(Machine::new(&[frame(SigVersion::Legacy, big.clone())], vec![], 0, None, true, 0, None).is_err());
+        assert!(Machine::new(&[frame(SigVersion::WitnessV0, big)], vec![], 0, None, true, 0, None).is_err());
     }
 }

@@ -6,7 +6,7 @@ use bitcoin::script::Script;
 use bitcoin::secp256k1::{ecdsa, schnorr, Message, Secp256k1, VerifyOnly, XOnlyPublicKey};
 use bitcoin::sighash::{Annex, Prevouts, SighashCache, TapSighashType};
 use bitcoin::taproot::TapLeafHash;
-use bitcoin::{Amount, EcdsaSighashType, ScriptBuf, Transaction, TxOut};
+use bitcoin::{Amount, ScriptBuf, Transaction, TxOut};
 
 /// Outcome of a single signature check, verbose enough that the UI can explain
 /// *why* something failed rather than just showing a red 0.
@@ -128,24 +128,26 @@ impl SigContext {
             ));
         }
 
-        let parsed = match ecdsa::Signature::from_der(der) {
-            Ok(s) => Some(s),
-            Err(_) => {
-                if require_strict_der {
-                    return SigResult {
-                        valid: false,
-                        sighash: String::new(),
-                        sighash_type: describe_ecdsa_hashtype(hash_type_byte),
-                        detail: "signature is not strict DER (SCRIPT_VERIFY_DERSIG)".into(),
-                        warnings,
-                        ..Default::default()
-                    };
-                }
-                warnings.push("signature is not strict DER; parsed leniently".into());
-                ecdsa::Signature::from_der_lax(der).ok()
+        // BIP66 strictness is a byte-level test on the signature including its
+        // sighash type byte, exactly Core's IsValidSignatureEncoding. libsecp's
+        // strict parser cannot stand in for it: some malformed encodings (e.g.
+        // a negative-looking R) come back Ok as an all-zero signature.
+        if !is_strict_der(sig) {
+            if require_strict_der {
+                return SigResult {
+                    valid: false,
+                    sighash: String::new(),
+                    sighash_type: describe_ecdsa_hashtype(hash_type_byte),
+                    detail: "signature is not strict DER (SCRIPT_VERIFY_DERSIG)".into(),
+                    warnings,
+                    ..Default::default()
+                };
             }
-        };
-        let Some(signature) = parsed else {
+            warnings.push("signature is not strict DER; parsed leniently".into());
+        }
+        // Core always parses with the lax parser (CPubKey::Verify), whatever
+        // the flags say; strictness is only ever the check above.
+        let Some(signature) = ecdsa::Signature::from_der_lax(der).ok() else {
             return SigResult {
                 valid: false,
                 sighash: String::new(),
@@ -204,7 +206,10 @@ impl SigContext {
         };
 
         let msg = Message::from_digest(sighash);
-        let valid = secp.verify_ecdsa(&msg, &signature, &pk).is_ok();
+        // libsecp only accepts low-S signatures, but high S is consensus-valid
+        // (LOW_S is policy); verify the normalized copy, the way Core calls
+        // secp256k1_ecdsa_signature_normalize before verifying.
+        let valid = secp.verify_ecdsa(&msg, &normalized, &pk).is_ok();
         let mut display = sighash;
         display.reverse(); // sighashes are conventionally shown big-endian
         SigResult {
@@ -222,26 +227,80 @@ impl SigContext {
     }
 
     fn ecdsa_sighash(&self, mode: &SigMode, hash_type: u32) -> Result<[u8; 32], String> {
-        let mut cache = SighashCache::new(&self.tx);
+        let cache = SighashCache::new(&self.tx);
         match mode {
             SigMode::Legacy { script_code } => cache
                 .legacy_signature_hash(self.input_index, script_code, hash_type)
                 .map(|h| h.to_byte_array())
                 .map_err(|e| format!("legacy sighash failed: {}", e)),
-            SigMode::WitnessV0 { script_code } => {
-                let sighash_type = EcdsaSighashType::from_consensus(hash_type);
-                cache
-                    .p2wsh_signature_hash(
-                        self.input_index,
-                        script_code,
-                        self.value()?,
-                        sighash_type,
-                    )
-                    .map(|h| h.to_byte_array())
-                    .map_err(|e| format!("BIP143 sighash failed: {}", e))
-            }
+            SigMode::WitnessV0 { script_code } => self.bip143_sighash(script_code, hash_type),
             _ => Err("taproot sighash requested for an ECDSA check".into()),
         }
+    }
+
+    /// BIP143 digest, hand-rolled so the raw hash-type byte is what gets
+    /// serialized. Core hashes `vchSig.back()` verbatim; rust-bitcoin's typed
+    /// API canonicalizes nonstandard bytes (e.g. 0x65 becomes SIGHASH_ALL)
+    /// before serializing, so mined signatures with odd sighash bytes — which
+    /// are consensus-valid — would fail to verify.
+    fn bip143_sighash(&self, script_code: &Script, hash_type: u32) -> Result<[u8; 32], String> {
+        use bitcoin::consensus::Encodable;
+        use bitcoin::hashes::{sha256d, Hash};
+
+        let tx = &self.tx;
+        let input = tx
+            .input
+            .get(self.input_index)
+            .ok_or_else(|| "input index out of range".to_string())?;
+        let base = hash_type & 0x1f;
+        let single = base == 3;
+        let none = base == 2;
+        let anyone_can_pay = hash_type & 0x80 != 0;
+
+        let hash_prevouts = if anyone_can_pay {
+            [0u8; 32]
+        } else {
+            let mut v = Vec::new();
+            for i in &tx.input {
+                i.previous_output.consensus_encode(&mut v).unwrap();
+            }
+            sha256d::Hash::hash(&v).to_byte_array()
+        };
+        let hash_sequence = if anyone_can_pay || single || none {
+            [0u8; 32]
+        } else {
+            let mut v = Vec::new();
+            for i in &tx.input {
+                i.sequence.consensus_encode(&mut v).unwrap();
+            }
+            sha256d::Hash::hash(&v).to_byte_array()
+        };
+        let hash_outputs = if !single && !none {
+            let mut v = Vec::new();
+            for o in &tx.output {
+                o.consensus_encode(&mut v).unwrap();
+            }
+            sha256d::Hash::hash(&v).to_byte_array()
+        } else if single && self.input_index < tx.output.len() {
+            let mut v = Vec::new();
+            tx.output[self.input_index].consensus_encode(&mut v).unwrap();
+            sha256d::Hash::hash(&v).to_byte_array()
+        } else {
+            [0u8; 32]
+        };
+
+        let mut enc = Vec::new();
+        tx.version.consensus_encode(&mut enc).unwrap();
+        enc.extend_from_slice(&hash_prevouts);
+        enc.extend_from_slice(&hash_sequence);
+        input.previous_output.consensus_encode(&mut enc).unwrap();
+        script_code.consensus_encode(&mut enc).unwrap();
+        self.value()?.consensus_encode(&mut enc).unwrap();
+        input.sequence.consensus_encode(&mut enc).unwrap();
+        enc.extend_from_slice(&hash_outputs);
+        tx.lock_time.consensus_encode(&mut enc).unwrap();
+        enc.extend_from_slice(&hash_type.to_le_bytes());
+        Ok(sha256d::Hash::hash(&enc).to_byte_array())
     }
 
     /// Schnorr check (`OP_CHECKSIG` in tapscript, and key-path spends).
@@ -363,6 +422,43 @@ impl SigContext {
     }
 }
 
+/// Core's `IsValidSignatureEncoding` (BIP66), byte for byte. `sig` includes
+/// the trailing sighash type byte, as Core checks it.
+pub fn is_strict_der(sig: &[u8]) -> bool {
+    // Minimum and maximum size constraints.
+    if sig.len() < 9 || sig.len() > 73 {
+        return false;
+    }
+    // A signature is of type 0x30 (compound), covering everything but the
+    // sighash byte.
+    if sig[0] != 0x30 || sig[1] as usize != sig.len() - 3 {
+        return false;
+    }
+    let len_r = sig[3] as usize;
+    if 5 + len_r >= sig.len() {
+        return false;
+    }
+    let len_s = sig[5 + len_r] as usize;
+    if len_r + len_s + 7 != sig.len() {
+        return false;
+    }
+    // R: positive integer, minimally encoded.
+    if sig[2] != 0x02 || len_r == 0 || sig[4] & 0x80 != 0 {
+        return false;
+    }
+    if len_r > 1 && sig[4] == 0x00 && sig[5] & 0x80 == 0 {
+        return false;
+    }
+    // S: positive integer, minimally encoded.
+    if sig[len_r + 4] != 0x02 || len_s == 0 || sig[len_r + 6] & 0x80 != 0 {
+        return false;
+    }
+    if len_s > 1 && sig[len_r + 6] == 0x00 && sig[len_r + 7] & 0x80 == 0 {
+        return false;
+    }
+    true
+}
+
 /// Legacy `FindAndDelete`: `OP_CHECKSIG` strips any push of the signature from
 /// the scriptCode before hashing. Only reachable in pre-segwit scripts.
 ///
@@ -441,6 +537,19 @@ mod tests {
 
     fn script(hex: &str) -> ScriptBuf {
         ScriptBuf::from_bytes(hex::decode(hex).unwrap())
+    }
+
+    #[test]
+    fn strict_der_matches_core() {
+        // Real mined signatures (sighash byte included).
+        let strict = hex::decode("3045022100c233c3a8a510e03ad18b0a24694ef00c78101bfd5ac075b8c1e9807b4c7deb8702204124fe2ec6e15f72fe5df8b2ce87f6d65bceb385a9f8cc9dea711cbec9d56aa901").unwrap();
+        assert!(is_strict_der(&strict));
+        // R has its high bit set with no 0x00 prefix: valid signature on the
+        // chain (block 170065), but not strict DER.
+        let negative_r = hex::decode("30440220848b4dd5fe1b177a2aa7e5fca089b2633b2e90fbbbc62b41f6d7801902566e600220d911b4138c44b611ff835fd00163ccd2b96b12bd2b126cfa1abc7e78a2bdab9e01").unwrap();
+        assert!(!is_strict_der(&negative_r));
+        assert!(!is_strict_der(&[0x01])); // hashtype byte alone
+        assert!(!is_strict_der(&strict[..strict.len() - 1])); // hashtype missing
     }
 
     #[test]
