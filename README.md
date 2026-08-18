@@ -52,6 +52,14 @@ memory carries over.
   Consensus rules are on by default; standardness-only rules (marked
   *policy*) start off, so a mined transaction always replays the way the
   chain accepted it — plenty of mined ones are nonstandard.
+- **Experimental mode.** The `EXPERIMENTAL` flag (raw-script mode only)
+  re-enables the opcodes disabled in 2010 — `OP_CAT`, `OP_SUBSTR`,
+  `OP_LEFT`, `OP_RIGHT`, `OP_INVERT`, `OP_AND`/`OP_OR`/`OP_XOR`,
+  `OP_2MUL`/`OP_2DIV`, `OP_MUL`/`OP_DIV`/`OP_MOD`, `OP_LSHIFT`/`OP_RSHIFT` —
+  with their original semantics, and lifts the consensus resource limits
+  (element size, script size, stack size, op count) so you can visualize how
+  scripts using them would execute. Transactions always run under real
+  consensus rules regardless; the toggle greys out outside the script tab.
 - **Deep links.** `?txid=<txid>&vin=<n>&net=mainnet` loads a spend directly.
 - **Resizable panels.** Drag the dividers between the columns and above the
   console, or use the sliders under *layout*; arrow keys nudge a focused
