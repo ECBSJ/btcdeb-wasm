@@ -149,10 +149,12 @@ impl Debugger {
             None => None,
         };
         let ctx = sig::SigContext { tx: tx.clone(), input_index, prevouts: outs };
+        // EXPERIMENTAL (disabled opcodes, no limits) is a bare-script playground
+        // feature; real transactions always run under real consensus rules.
         let machine = Machine::new(
             &info.frames,
             initial,
-            flags,
+            flags & !interp::EXPERIMENTAL,
             Some(ctx),
             assume_valid_sigs,
             witness_size,
@@ -507,6 +509,7 @@ pub fn flag_info() -> Result<JsValue, JsValue> {
         ("CHECKLOCKTIMEVERIFY", interp::VERIFY_CHECKLOCKTIMEVERIFY, "enforce BIP65 CLTV", false),
         ("CHECKSEQUENCEVERIFY", interp::VERIFY_CHECKSEQUENCEVERIFY, "enforce BIP112 CSV", false),
         ("NULLFAIL", interp::VERIFY_NULLFAIL, "failed checks must use an empty signature (policy)", true),
+        ("EXPERIMENTAL", interp::EXPERIMENTAL, "run disabled opcodes (OP_CAT, OP_SUBSTR, ...) with no resource limits (policy)", true),
     ];
     let list: Vec<FlagView> = flags
         .into_iter()

@@ -32,11 +32,14 @@ function instantiate() {
   if (!src) return;
 
   if (src.type === 'tx') {
+    // EXPERIMENTAL is limited to bare-script mode. The preference stays in
+    // session.flags (so it springs back for the next bare script); only the
+    // value handed to the engine is masked.
     session.dbg = engine.Debugger.fromTx(
       src.txHex,
       src.vin,
       src.prevouts,
-      session.flags,
+      session.flags & ~expBit(),
       session.assumeSigs,
     );
   } else {
@@ -150,6 +153,7 @@ function reset() {
 function buildFromTx(txHex, vin, prevouts, meta) {
   session.source = { type: 'tx', txHex, vin, prevouts };
   session.meta = { ...meta, vin };
+  syncExpAvailability();
   try {
     instantiate();
     ui.log(`loaded ${session.info.kind} — ${session.frames.length} script(s) to execute`, 'cmd');
@@ -237,6 +241,7 @@ function loadScript(src, stackText, sigversion) {
     .filter(Boolean);
   session.source = { type: 'script', src, stack, sigversion };
   session.meta = {};
+  syncExpAvailability();
   try {
     instantiate();
     ui.log(`loaded a bare ${sigversion} script with ${stack.length} stack item(s)`, 'cmd');
@@ -271,6 +276,9 @@ function buildFlagUI() {
     label.append(box, span);
     host.appendChild(label);
   }
+  // The initial active tab decides EXPERIMENTAL's availability before any
+  // tab switch or flag change happens.
+  syncExpAvailability();
 }
 
 function syncFlagUI() {
@@ -278,6 +286,7 @@ function syncFlagUI() {
   session.flagList.forEach((f, i) => {
     if (boxes[i]) boxes[i].checked = (session.flags & f.bit) !== 0;
   });
+  syncExpAvailability();
   $('assume-sigs').checked = session.assumeSigs;
 }
 
@@ -289,6 +298,30 @@ function setFlag(bit, on, name) {
     ui.log('restarting the script with the new flags', 'info');
     instantiate();
   }
+}
+
+// EXPERIMENTAL only applies to bare-script debugging; outside that mode its
+// checkbox is disabled and the bit is masked out of the value passed to the
+// engine.
+function expBit() {
+  const f = session.flagList.find((f) => f.name === 'EXPERIMENTAL');
+  return f ? f.bit : 0;
+}
+
+function expAllowed() {
+  const tab = document.querySelector('.tab.active');
+  return !tab || tab.dataset.tab === 'script';
+}
+
+function syncExpAvailability() {
+  const boxes = $('flags').querySelectorAll('input[type=checkbox]');
+  session.flagList.forEach((f, i) => {
+    if (f.name !== 'EXPERIMENTAL' || !boxes[i]) return;
+    boxes[i].disabled = !expAllowed();
+    boxes[i].parentElement.title = expAllowed()
+      ? f.description
+      : `${f.description} — only available in raw-script mode`;
+  });
 }
 
 function setAssume(on) {
@@ -400,6 +433,7 @@ function selectTab(name) {
   for (const p of document.querySelectorAll('.tabpane')) {
     p.classList.toggle('active', p.dataset.pane === name);
   }
+  syncExpAvailability();
 }
 
 // ── command context ───────────────────────────────────────────────────────

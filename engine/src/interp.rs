@@ -34,6 +34,11 @@ pub const VERIFY_CLEANSTACK: u32 = 1 << 8;
 pub const VERIFY_CHECKLOCKTIMEVERIFY: u32 = 1 << 9;
 pub const VERIFY_CHECKSEQUENCEVERIFY: u32 = 1 << 10;
 pub const VERIFY_NULLFAIL: u32 = 1 << 14;
+/// Sandbox mode: run the pre-2010 disabled opcodes (OP_CAT, OP_SUBSTR, ...)
+/// and lift the consensus resource limits (element size, script size, stack
+/// size, op count). Purely for visualization — nothing here is valid on
+/// mainnet. Defaults off.
+pub const EXPERIMENTAL: u32 = 1 << 15;
 
 #[derive(Clone, serde::Serialize)]
 pub struct StepRecord {
@@ -164,8 +169,10 @@ impl Machine {
         for f in frames {
             let bytes = hex::decode(&f.script_hex).map_err(|e| format!("bad script hex: {}", e))?;
             // The 10,000-byte cap is a legacy/v0 rule: tapscript has no script
-            // size limit (BIP342), only the block weight bound.
-            let size_capped = matches!(f.sigversion, SigVersion::Legacy | SigVersion::WitnessV0);
+            // size limit (BIP342), only the block weight bound. Experimental
+            // mode lifts it everywhere.
+            let size_capped = matches!(f.sigversion, SigVersion::Legacy | SigVersion::WitnessV0)
+                && flags & EXPERIMENTAL == 0;
             if size_capped && bytes.len() > MAX_SCRIPT_SIZE {
                 return Err(format!(
                     "script {} is {} bytes, over the {} byte limit",
@@ -298,6 +305,10 @@ impl Machine {
 
     fn require_minimal(&self) -> bool {
         self.flags & VERIFY_MINIMALDATA != 0
+    }
+
+    fn experimental(&self) -> bool {
+        self.flags & EXPERIMENTAL != 0
     }
 
     fn pop(&mut self) -> Result<Vec<u8>, String> {
@@ -532,13 +543,14 @@ impl Machine {
             return r;
         }
 
-        if is_disabled(op) {
+        if is_disabled(op) && !self.experimental() {
             r.error = Some(format!("{} is disabled", op_name(op)));
             return r;
         }
 
-        // Op budget (not applied to tapscript, which uses the sigops budget).
-        if !tapscript && op > 0x60 {
+        // Op budget (not applied to tapscript, which uses the sigops budget,
+        // nor to experimental mode).
+        if !tapscript && !self.experimental() && op > 0x60 {
             self.op_count += 1;
             if self.op_count > MAX_OPS_PER_SCRIPT {
                 r.error = Some(format!("op count exceeded {}", MAX_OPS_PER_SCRIPT));
@@ -559,7 +571,7 @@ impl Machine {
             return r;
         }
 
-        if self.stack.len() + self.altstack.len() > MAX_STACK_SIZE {
+        if !self.experimental() && self.stack.len() + self.altstack.len() > MAX_STACK_SIZE {
             r.error = Some(format!("stack size exceeded {} elements", MAX_STACK_SIZE));
             return r;
         }
@@ -779,7 +791,7 @@ impl Machine {
             0x00 => self.stack.push(Vec::new()),
             0x01..=0x4e => {
                 let data = ins.data.clone().unwrap_or_default();
-                if data.len() > MAX_SCRIPT_ELEMENT_SIZE {
+                if !self.experimental() && data.len() > MAX_SCRIPT_ELEMENT_SIZE {
                     return Err(format!(
                         "push of {} bytes exceeds the {} byte element limit",
                         data.len(),
@@ -957,6 +969,75 @@ impl Machine {
                 self.stack.insert(n - 2, top);
             }
 
+            // --- disabled opcodes (EXPERIMENTAL flag only) ---
+            // Reached only when the gate above let them through; semantics
+            // follow the pre-2010 Bitcoin code.
+            0x7e => {
+                // OP_CAT
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let mut out = a;
+                out.extend_from_slice(&b);
+                self.stack.push(out);
+            }
+            0x7f => {
+                // OP_SUBSTR: begin and size are clamped to the string bounds.
+                let size = self.pop_num(num::MAX_NUM_SIZE)?;
+                let begin = self.pop_num(num::MAX_NUM_SIZE)?;
+                let s = self.pop()?;
+                if begin < 0 || begin as usize > s.len() {
+                    return Err("OP_SUBSTR begin index out of range".into());
+                }
+                if size < 0 {
+                    return Err("OP_SUBSTR size out of range".into());
+                }
+                let begin = begin as usize;
+                let end = (begin + size as usize).min(s.len());
+                self.stack.push(s[begin..end].to_vec());
+            }
+            0x80 | 0x81 => {
+                // OP_LEFT / OP_RIGHT
+                let n = self.pop_num(num::MAX_NUM_SIZE)?;
+                let s = self.pop()?;
+                if n < 0 || n as usize > s.len() {
+                    return Err(format!("{} index {} out of range", op_name(op), n));
+                }
+                let n = n as usize;
+                if op == 0x80 {
+                    self.stack.push(s[..n].to_vec());
+                } else {
+                    self.stack.push(s[s.len() - n..].to_vec());
+                }
+            }
+            0x83 => {
+                // OP_INVERT: bitwise complement of the top element.
+                let v = self.pop()?;
+                self.stack.push(v.iter().map(|b| !b).collect::<Vec<u8>>());
+            }
+            0x84 | 0x85 | 0x86 => {
+                // OP_AND / OP_OR / OP_XOR: operands must be the same length.
+                let b = self.pop()?;
+                let a = self.pop()?;
+                if a.len() != b.len() {
+                    return Err(format!(
+                        "{} on operands of different sizes ({} vs {} bytes)",
+                        op_name(op),
+                        a.len(),
+                        b.len()
+                    ));
+                }
+                let out: Vec<u8> = a
+                    .iter()
+                    .zip(b.iter())
+                    .map(|(&x, &y)| match op {
+                        0x84 => x & y,
+                        0x85 => x | y,
+                        _ => x ^ y,
+                    })
+                    .collect();
+                self.stack.push(out);
+            }
+
             0x82 => {
                 let len = self.peek(0)?.len() as i64;
                 self.push_num(len);
@@ -981,11 +1062,13 @@ impl Machine {
             }
 
             // --- arithmetic ---
-            0x8b | 0x8c | 0x8f | 0x90 | 0x91 | 0x92 => {
+            0x8b | 0x8c | 0x8d | 0x8e | 0x8f | 0x90 | 0x91 | 0x92 => {
                 let n = self.pop_num(num::MAX_NUM_SIZE)?;
                 let res = match op {
                     0x8b => n + 1,
                     0x8c => n - 1,
+                    0x8d => n * 2,  // OP_2MUL (disabled on mainnet)
+                    0x8e => n / 2,  // OP_2DIV (disabled on mainnet)
                     0x8f => -n,
                     0x90 => n.abs(),
                     0x91 => (n == 0) as i64,
@@ -993,30 +1076,85 @@ impl Machine {
                 };
                 self.push_num(res);
             }
-            0x93 | 0x94 | 0x9a | 0x9b | 0x9c | 0x9d | 0x9e | 0x9f | 0xa0 | 0xa1 | 0xa2 | 0xa3
-            | 0xa4 => {
-                let b = self.pop_num(num::MAX_NUM_SIZE)?;
-                let a = self.pop_num(num::MAX_NUM_SIZE)?;
-                let res = match op {
-                    0x93 => a + b,
-                    0x94 => a - b,
-                    0x9a => ((a != 0) && (b != 0)) as i64,
-                    0x9b => ((a != 0) || (b != 0)) as i64,
-                    0x9c | 0x9d => (a == b) as i64,
-                    0x9e => (a != b) as i64,
-                    0x9f => (a < b) as i64,
-                    0xa0 => (a > b) as i64,
-                    0xa1 => (a <= b) as i64,
-                    0xa2 => (a >= b) as i64,
-                    0xa3 => a.min(b),
-                    _ => a.max(b),
-                };
-                if op == 0x9d {
-                    if res == 0 {
-                        return Err(format!("OP_NUMEQUALVERIFY failed: {} != {}", a, b));
+            0x93 | 0x94 | 0x95 | 0x96 | 0x97 | 0x98 | 0x99 | 0x9a | 0x9b | 0x9c | 0x9d | 0x9e
+            | 0x9f | 0xa0 | 0xa1 | 0xa2 | 0xa3 | 0xa4 => {
+                if matches!(op, 0x98 | 0x99) {
+                    // OP_LSHIFT / OP_RSHIFT (disabled on mainnet): Core's
+                    // original code shifted the raw byte string, keeping its
+                    // length; bits shifted past the ends are lost.
+                    let n = self.pop_num(num::MAX_NUM_SIZE)?;
+                    let mut v = self.pop()?;
+                    if n < 0 || n as usize >= v.len() * 8 {
+                        return Err(format!("{} shift {} out of range", op_name(op), n));
                     }
+                    let bytes = n as usize / 8;
+                    let bits = (n as usize) % 8;
+                    if op == 0x98 {
+                        v.drain(..bytes);
+                        v.resize(v.len() + bytes, 0);
+                        if bits > 0 {
+                            let mut carry = 0u8;
+                            for b in v.iter_mut() {
+                                let next = *b >> (8 - bits);
+                                *b = (*b << bits) | carry;
+                                carry = next;
+                            }
+                        }
+                    } else {
+                        let keep = v.len() - bytes;
+                        v.truncate(keep);
+                        let mut shifted = vec![0u8; bytes];
+                        shifted.extend_from_slice(&v);
+                        v = shifted;
+                        if bits > 0 {
+                            let mut carry = 0u8;
+                            for b in v.iter_mut().rev() {
+                                let next = *b << (8 - bits);
+                                *b = (*b >> bits) | carry;
+                                carry = next;
+                            }
+                        }
+                    }
+                    self.stack.push(v);
                 } else {
-                    self.push_num(res);
+                    let b = self.pop_num(num::MAX_NUM_SIZE)?;
+                    let a = self.pop_num(num::MAX_NUM_SIZE)?;
+                    let res = match op {
+                        0x93 => a + b,
+                        0x94 => a - b,
+                        0x95 => a * b, // OP_MUL (disabled on mainnet)
+                        0x96 => {
+                            // OP_DIV (disabled on mainnet)
+                            if b == 0 {
+                                return Err("OP_DIV by zero".into());
+                            }
+                            a / b
+                        }
+                        0x97 => {
+                            // OP_MOD (disabled on mainnet)
+                            if b == 0 {
+                                return Err("OP_MOD by zero".into());
+                            }
+                            a % b
+                        }
+                        0x9a => ((a != 0) && (b != 0)) as i64,
+                        0x9b => ((a != 0) || (b != 0)) as i64,
+                        0x9c | 0x9d => (a == b) as i64,
+                        0x9e => (a != b) as i64,
+                        0x9f => (a < b) as i64,
+                        0xa0 => (a > b) as i64,
+                        0xa1 => (a <= b) as i64,
+                        0xa2 => (a >= b) as i64,
+                        0xa3 => a.min(b),
+                        _ => a.max(b),
+                    };
+                    if op == 0x9d {
+                        if res == 0 {
+                            return Err(format!("OP_NUMEQUALVERIFY failed: {} != {}", a, b));
+                        }
+                    } else {
+                        self.push_num(res);
+                    }
                 }
             }
             0xa5 => {
@@ -1342,5 +1480,132 @@ mod tests {
         assert!(ok.is_ok(), "oversized tapscript must build: {:?}", ok.err());
         assert!(Machine::new(&[frame(SigVersion::Legacy, big.clone())], vec![], 0, None, true, 0, None).is_err());
         assert!(Machine::new(&[frame(SigVersion::WitnessV0, big)], vec![], 0, None, true, 0, None).is_err());
+    }
+
+    /// EXPERIMENTAL lifts the script size cap for legacy/v0 too.
+    #[test]
+    fn experimental_lifts_script_size_cap() {
+        let big = "51".repeat(MAX_SCRIPT_SIZE + 1);
+        let m = Machine::new(
+            &[frame(SigVersion::Legacy, big)],
+            vec![],
+            EXPERIMENTAL,
+            None,
+            true,
+            0,
+            None,
+        );
+        assert!(m.is_ok(), "experimental mode must allow oversized scripts: {:?}", m.err());
+    }
+
+    fn run_hex(script: &str, flags: u32, stack: Vec<Vec<u8>>) -> Machine {
+        let mut m = Machine::new(
+            &[frame(SigVersion::Legacy, script.to_string())],
+            stack,
+            flags,
+            None,
+            true,
+            0,
+            None,
+        )
+        .expect("machine builds");
+        assert!(m.run_to_completion(100_000), "script should finish");
+        m
+    }
+
+    fn top(m: &Machine) -> Vec<u8> {
+        m.stack.last().expect("non-empty stack").clone()
+    }
+
+    #[test]
+    fn disabled_ops_fail_without_experimental() {
+        // OP_1 OP_1 OP_CAT — 517e
+        let m = run_hex("51517e", 0, vec![]);
+        assert!(m.error.unwrap().contains("OP_CAT is disabled"));
+    }
+
+    #[test]
+    fn experimental_cat() {
+        // push "hello", push " world", OP_CAT
+        let m = run_hex("0568656c6c6f0620776f726c647e", EXPERIMENTAL, vec![]);
+        assert!(m.error.is_none(), "{:?}", m.error);
+        assert_eq!(top(&m), b"hello world");
+    }
+
+    #[test]
+    fn experimental_substr_left_right() {
+        // "abcdef", begin=1 size=3 -> "bcd"
+        let m = run_hex("0661626364656651537f", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), b"bcd");
+        // OP_LEFT 3 -> "abc"
+        let m = run_hex("066162636465665380", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), b"abc");
+        // OP_RIGHT 2 -> "ef"
+        let m = run_hex("066162636465665281", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), b"ef");
+        // out-of-range index errors (3 bytes requested from a 2-byte string)
+        let m = run_hex("0261615380", EXPERIMENTAL, vec![]);
+        assert!(m.error.unwrap().contains("out of range"));
+    }
+
+    #[test]
+    fn experimental_bitwise_ops() {
+        // 0xf0 & 0xcc = 0xc0 ; | = 0xfc ; ^ = 0x3c ; ~0xf0 = 0x0f
+        let m = run_hex("01f001cc84", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), vec![0xc0]);
+        let m = run_hex("01f001cc85", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), vec![0xfc]);
+        let m = run_hex("01f001cc86", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), vec![0x3c]);
+        let m = run_hex("01f083", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), vec![0x0f]);
+        // mismatched operand lengths error
+        let m = run_hex("01f002aabb84", EXPERIMENTAL, vec![]);
+        assert!(m.error.unwrap().contains("different sizes"));
+    }
+
+    #[test]
+    fn experimental_arithmetic_ops() {
+        // 6 2 OP_2MUL => 6 4; OP_ADD => 10... simpler: 7 OP_2MUL => 14
+        let m = run_hex("578d", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), num::encode(14));
+        // 7 OP_2DIV => 3 (truncating division)
+        let m = run_hex("578e", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), num::encode(3));
+        // 6 7 OP_MUL => 42
+        let m = run_hex("565795", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), num::encode(42));
+        // 7 2 OP_DIV => 3
+        let m = run_hex("575296", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), num::encode(3));
+        // 7 2 OP_MOD => 1
+        let m = run_hex("575297", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), num::encode(1));
+        // divide by zero errors (OP_7 OP_0 OP_DIV)
+        let m = run_hex("570096", EXPERIMENTAL, vec![]);
+        assert!(m.error.unwrap().contains("OP_DIV by zero"));
+    }
+
+    #[test]
+    fn experimental_shifts() {
+        // 0x0001 << 8 => 0x0100 ; 0x0100 >> 8 => 0x0001
+        let m = run_hex("0200015898", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), vec![0x01, 0x00]);
+        let m = run_hex("0201005899", EXPERIMENTAL, vec![]);
+        assert_eq!(top(&m), vec![0x00, 0x01]);
+        // shift >= bit length errors
+        let m = run_hex("01ff5898", EXPERIMENTAL, vec![]);
+        assert!(m.error.unwrap().contains("out of range"));
+    }
+
+    #[test]
+    fn experimental_lifts_element_and_stack_limits() {
+        // A 600-byte push: PUSHDATA2 0x58 0x02 then 600 bytes of 0xaa, then
+        // OP_DROP OP_1 so the script succeeds.
+        let big_push = format!("4d5802{}7551", "aa".repeat(600));
+        let m = run_hex(&big_push, 0, vec![]);
+        assert!(m.error.unwrap().contains("element limit"));
+        let m = run_hex(&big_push, EXPERIMENTAL, vec![]);
+        assert!(m.error.is_none(), "{:?}", m.error);
     }
 }

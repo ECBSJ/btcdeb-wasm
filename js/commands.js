@@ -272,6 +272,14 @@ export const COMMANDS = {
       }
       const flag = ctx.session.flagList.find((f) => f.name === name);
       if (!flag) throw new Error(`unknown flag ${name} (run \`flags\` to list them)`);
+      if (
+        name === 'EXPERIMENTAL' &&
+        args[1] !== 'off' &&
+        ctx.session.source &&
+        ctx.session.source.type !== 'script'
+      ) {
+        throw new Error('EXPERIMENTAL is only available in raw-script mode');
+      }
       if (!args[1]) throw new Error(`usage: flags ${name} on|off`);
       ctx.setFlag(flag.bit, args[1] !== 'off');
     },
