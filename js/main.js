@@ -546,6 +546,22 @@ function wireControls() {
   });
 }
 
+// ── theme ─────────────────────────────────────────────────────────────
+
+// Dark is the identity; light persists in localStorage like the panel sizes.
+function initTheme() {
+  const box = $('theme-light');
+  const apply = (light) => {
+    document.documentElement.dataset.theme = light ? 'light' : '';
+    box.checked = light;
+  };
+  apply(localStorage.getItem('theme') === 'light');
+  box.addEventListener('change', () => {
+    apply(box.checked);
+    localStorage.setItem('theme', box.checked ? 'light' : 'dark');
+  });
+}
+
 // ── boot ──────────────────────────────────────────────────────────────────
 
 async function boot() {
@@ -583,4 +599,5 @@ async function boot() {
 
 // Panel sizing is pure DOM, so it works even if the engine fails to load.
 initLayout();
+initTheme();
 boot();

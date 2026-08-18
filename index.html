@@ -26,6 +26,13 @@
 <meta name="theme-color" content="#00ff9c">
 
 <link rel="stylesheet" href="css/theme.css">
+<script>
+  // Apply the saved theme before first paint so a light-mode user never sees
+  // a flash of the dark theme.
+  if (localStorage.getItem('theme') === 'light') {
+    document.documentElement.dataset.theme = 'light';
+  }
+</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>₿</text></svg>">
 </head>
 <body>
@@ -148,6 +155,10 @@
         <input type="range" data-size="console" step="2">
       </label>
       <button id="size-reset" class="btn">reset layout</button>
+      <label class="check">
+        <input type="checkbox" id="theme-light">
+        <span>light mode</span>
+      </label>
       <p class="hint">The dividers between panels drag too — double-click one to
         put that panel back to its default.</p>
     </section>

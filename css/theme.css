@@ -19,6 +19,22 @@
   --red:       #ff5f56;
   --cyan:      #4ae3ff;
 
+  /* Derived surfaces, kept as variables so the light theme can flip them. */
+  --bg-deep:    #040a08;   /* consoles, inputs, listings */
+  --bg-inset:   #071310;   /* notes, stat cells, cmdline */
+  --bg-hover:   #16302a;   /* button/example hover */
+  --bg-current: #10332a;   /* current op row */
+  --bg-top:     #0c2119;   /* stack top item */
+  --line-soft:  #0a1a14;   /* separators inside inset boxes */
+  --red-soft:   #ffb4b0;   /* error text on dark surfaces */
+  --amber-soft: #ffe6a8;   /* warning text on dark surfaces */
+  --red-dim:    #6b2a26;   /* fail badge border */
+  --amber-dim:  #6b5520;   /* busy badge border */
+  --on-accent:  #04120c;   /* text on bright green (selection) */
+  --focus-ring: rgba(0, 255, 156, 0.2);
+  --topbar:     linear-gradient(180deg, #0b1a14, #060d0a);
+  --page-glow:  radial-gradient(ellipse at 50% -20%, #0b1f18 0%, transparent 60%);
+
   --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas,
           "DejaVu Sans Mono", monospace;
   --glow: 0 0 6px rgba(0, 255, 156, 0.35);
@@ -32,6 +48,44 @@
   --gutter: 6px;
 }
 
+/* Light theme: same phosphor-green identity on paper. Scanlines and glow are
+   dark-surface effects and drop out entirely. */
+:root[data-theme="light"] {
+  --bg:        #e9efe9;
+  --bg-panel:  #f6faf6;
+  --bg-raise:  #e4ede4;
+  --grid:      #d5e0d5;
+  --line:      #c9d8c9;
+  --line-hot:  #9fbcaa;
+
+  --fg:        #123524;
+  --fg-dim:    #466b54;
+  --fg-faint:  #7d9a89;
+  --green:     #007a44;
+  --green-mid: #00915a;
+  --amber:     #8f6400;
+  --red:       #c23325;
+  --cyan:      #00708c;
+
+  --bg-deep:    #ffffff;
+  --bg-inset:   #edf3ed;
+  --bg-hover:   #d9ead9;
+  --bg-current: #d2ecd9;
+  --bg-top:     #d2ecd9;
+  --line-soft:  #e2ece2;
+  --red-soft:   #a32c1f;
+  --amber-soft: #7a5600;
+  --red-dim:    #e3b5b0;
+  --amber-dim:  #dcc99b;
+  --on-accent:  #ffffff;
+  --focus-ring: rgba(0, 145, 90, 0.25);
+  --topbar:     linear-gradient(180deg, #f2f8f2, #e2ece2);
+  --page-glow:  radial-gradient(ellipse at 50% -20%, #dcebdc 0%, transparent 60%);
+
+  --glow: none;
+}
+:root[data-theme="light"] .scanlines { display: none; }
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -41,7 +95,7 @@ html, body {
 
 body {
   background:
-    radial-gradient(ellipse at 50% -20%, #0b1f18 0%, transparent 60%),
+    var(--page-glow),
     var(--bg);
   color: var(--fg);
   font: 13px/1.5 var(--mono);
@@ -66,7 +120,7 @@ body {
   mix-blend-mode: overlay;
 }
 
-::selection { background: var(--green); color: #04120c; }
+::selection { background: var(--green); color: var(--on-accent); }
 
 /* ── scrollbars ─────────────────────────────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: var(--line-hot) transparent; }
@@ -86,7 +140,7 @@ body {
   gap: 12px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #0b1a14, #060d0a);
+  background: var(--topbar);
 }
 
 .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
@@ -234,7 +288,7 @@ h3.sub {
 
 input[type="text"], input[type="number"], textarea, select {
   width: 100%;
-  background: #040a08;
+  background: var(--bg-deep);
   color: var(--fg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -246,7 +300,7 @@ textarea { resize: vertical; word-break: break-all; }
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--green-mid);
-  box-shadow: 0 0 0 1px rgba(0, 255, 156, 0.2);
+  box-shadow: 0 0 0 1px var(--focus-ring);
 }
 select { cursor: pointer; }
 input::placeholder, textarea::placeholder { color: var(--fg-faint); }
@@ -284,7 +338,7 @@ input[type="range"]:focus-visible { outline: 1px solid var(--green-mid); }
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .btn:hover:not(:disabled) {
-  background: #16302a;
+  background: var(--bg-hover);
   border-color: var(--green-mid);
   color: var(--green);
 }
@@ -295,7 +349,7 @@ input[type="range"]:focus-visible { outline: 1px solid var(--green-mid); }
   border-color: var(--green-mid);
   color: var(--green);
 }
-.btn.primary:hover:not(:disabled) { background: #12352a; }
+.btn.primary:hover:not(:disabled) { background: var(--bg-hover); }
 kbd {
   font: inherit;
   font-size: 10px;
@@ -313,6 +367,8 @@ kbd {
   padding: 3px 0;
   cursor: pointer;
 }
+/* The theme toggle sits right under the reset-layout button. */
+.block > .btn + .check { margin-top: 8px; }
 .check input { accent-color: var(--green); flex: none; }
 .check span { color: var(--fg); }
 .check.off span { color: var(--fg-dim); }
@@ -360,7 +416,7 @@ kbd {
   padding: 4px 7px;
   cursor: pointer;
 }
-.example:hover { border-left-color: var(--green); color: var(--green); background: #0c1d17; }
+.example:hover { border-left-color: var(--green); color: var(--green); background: var(--bg-hover); }
 .example b { display: block; color: var(--fg); font-weight: 600; }
 
 /* ── badges ─────────────────────────────────────────────────────────── */
@@ -375,8 +431,8 @@ kbd {
   white-space: nowrap;
 }
 .badge.ok    { color: var(--green); border-color: var(--green-mid); }
-.badge.fail  { color: var(--red); border-color: #6b2a26; }
-.badge.busy  { color: var(--amber); border-color: #6b5520; }
+.badge.fail  { color: var(--red); border-color: var(--red-dim); }
+.badge.busy  { color: var(--amber); border-color: var(--amber-dim); }
 
 /* ── controls row ───────────────────────────────────────────────────── */
 .controls {
@@ -399,7 +455,7 @@ kbd {
 .listing {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #040a08;
+  background: var(--bg-deep);
   padding: 6px 0;
   flex: 1 1 auto;
   min-height: 90px;
@@ -440,7 +496,7 @@ kbd {
 .op.done { color: var(--fg-faint); }
 .op.done .txt .opcode, .op.done .txt .push { color: var(--fg-faint); }
 .op.current {
-  background: #10332a;
+  background: var(--bg-current);
   box-shadow: inset 2px 0 0 var(--green);
 }
 .op.current .txt .opcode { color: var(--green); text-shadow: var(--glow); }
@@ -469,12 +525,12 @@ kbd {
   line-height: 1.45;
   padding: 4px 8px;
   border-left: 2px solid var(--line-hot);
-  background: #071310;
+  background: var(--bg-inset);
   color: var(--fg-dim);
   word-break: break-word;
 }
-.note.err { border-left-color: var(--red); color: #ffb4b0; }
-.note.warn { border-left-color: var(--amber); color: #ffe6a8; }
+.note.err { border-left-color: var(--red); color: var(--red-soft); }
+.note.warn { border-left-color: var(--amber); color: var(--amber-soft); }
 .note.good { border-left-color: var(--green); color: var(--fg); }
 /* Continuation of the note above it: the hex behind a matched pair. */
 .note.cont {
@@ -494,7 +550,7 @@ kbd {
   border-radius: var(--radius);
   overflow: hidden;
 }
-.stat { background: #071310; padding: 5px 8px; min-width: 0; }
+.stat { background: var(--bg-inset); padding: 5px 8px; min-width: 0; }
 .stat .k {
   font-size: 9px;
   letter-spacing: 0.12em;
@@ -516,7 +572,7 @@ kbd {
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #040a08;
+  background: var(--bg-deep);
   max-height: 210px;
   overflow-y: auto;
 }
@@ -532,14 +588,14 @@ kbd {
   grid-template-columns: 3ch minmax(0, 1fr);
   gap: 8px;
   padding: 3px 8px;
-  border-bottom: 1px solid #0a1a14;
+  border-bottom: 1px solid var(--line-soft);
   font-size: 11px;
 }
 .stack li:last-child { border-bottom: none; }
 .stack li .i { color: var(--fg-faint); text-align: right; }
 .stack li .val { word-break: break-all; color: var(--cyan); }
 .stack li .val .len { color: var(--fg-faint); }
-.stack li.top { background: #0c2119; }
+.stack li.top { background: var(--bg-top); }
 .stack li.top .val { color: var(--green); }
 .stack li .empty { color: var(--fg-faint); font-style: italic; }
 
@@ -547,7 +603,7 @@ kbd {
 .detail {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #040a08;
+  background: var(--bg-deep);
   padding: 7px 9px;
   font-size: 11px;
   line-height: 1.5;
@@ -569,7 +625,7 @@ kbd {
   height: var(--console-h);
   display: flex;
   flex-direction: column;
-  background: #040a08;
+  background: var(--bg-deep);
 }
 .log {
   flex: 1 1 auto;
@@ -593,7 +649,7 @@ kbd {
   gap: 8px;
   padding: 6px 12px;
   border-top: 1px solid var(--line);
-  background: #071310;
+  background: var(--bg-inset);
 }
 .cmdline .prompt { color: var(--green); text-shadow: var(--glow); flex: none; }
 .cmdline input {
